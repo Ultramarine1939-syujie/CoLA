@@ -11,7 +11,10 @@ import json
 import torch
 import numpy as np
 import warnings
-warnings.filterwarnings("ignore")
+# 忽略警告信息
+warnings.filterwarnings("ignore")c
+
+# 导入自定义工具函数和模型、损失函数、配置文件等
 import core.utils as utils
 from core.model import CoLA
 from core.loss import TotalLoss
@@ -23,18 +26,23 @@ from eval.eval_detection import ANETdetection
 from terminaltables import AsciiTable
 
 def main():
+    # 设置GPU ID
     os.environ['CUDA_VISIBLE_DEVICES'] = cfg.GPU_ID
+    # 设置随机数种子，用于重现实验结果
     worker_init_fn = None
     if cfg.SEED >= 0:
         utils.set_seed(cfg.SEED)
         worker_init_fn = np.random.seed(cfg.SEED)
-
+    
+    # 创建输出路径、记录日志等
     utils.set_path(cfg)
     utils.save_config(cfg)
 
+    # 创建CoLA模型并放到GPU上运行
     net = CoLA(cfg)
     net = net.cuda()
 
+    # 创建训练数据集和测试数据集
     train_loader = torch.utils.data.DataLoader(
         NpyFeature(data_path=cfg.DATA_PATH, mode='train',
                         modal=cfg.MODAL, feature_fps=cfg.FEATS_FPS,
@@ -53,6 +61,7 @@ def main():
             shuffle=False, num_workers=cfg.NUM_WORKERS,
             worker_init_fn=worker_init_fn)
 
+    # 测试结果的记录格式
     test_info = {"step": [], "test_acc": [], "average_mAP": [],
                 "mAP@0.1": [], "mAP@0.2": [], "mAP@0.3": [], 
                 "mAP@0.4": [], "mAP@0.5": [], "mAP@0.6": [],
@@ -62,10 +71,12 @@ def main():
 
     criterion = TotalLoss()
 
+    # 将学习率从字符串转为浮点数，并使用Adam优化器
     cfg.LR = eval(cfg.LR)
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.LR[0],
         betas=(0.9, 0.999), weight_decay=0.0005)
 
+    # 如果运行模式是测试，则直接加载模型并评估性能
     if cfg.MODE == 'test':
         _, _ = test_all(net, cfg, test_loader, test_info, 0, None, cfg.MODEL_FILE)
         utils.save_best_record_thumos(test_info, 
@@ -77,6 +88,8 @@ def main():
         
     print('=> test frequency: {} steps'.format(cfg.TEST_FREQ))
     print('=> start training...')
+
+    # 训练过程
     for step in range(1, cfg.NUM_ITERS + 1):
         if step > 1 and cfg.LR[step - 1] != cfg.LR[step - 2]:
             for param_group in optimizer.param_groups:
@@ -93,12 +106,14 @@ def main():
         losses.update(cost.item(), cfg.BATCH_SIZE)
         batch_time.update(time.time() - end)
         end = time.time()
+        # 打印结果
         if step == 1 or step % cfg.PRINT_FREQ == 0:
             print(('Step: [{0:04d}/{1}]\t' \
                    'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
                    'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
                     step, cfg.NUM_ITERS, batch_time=batch_time, loss=losses)))
-            
+        
+        # 每隔一定步数测试一次，记录性能指标
         if step > -1 and step % cfg.TEST_FREQ == 0:
 
             mAP_50, mAP_AVG = test_all(net, cfg, test_loader, test_info, step, writter)
@@ -120,6 +135,7 @@ def main():
 
     print(utils.table_format(best_test_info, cfg.TIOU_THRESH, '[CoLA] THUMOS\'14 Performance'))
 
+# 训练一个batch的数据
 def train_one_step(net, loader_iter, optimizer, criterion, writter, step):
     net.train()
     
@@ -138,6 +154,7 @@ def train_one_step(net, loader_iter, optimizer, criterion, writter, step):
         writter.add_scalar(key, loss[key].cpu().item(), step)
     return cost
 
+# 测试整个数据集，记录性能指标
 @torch.no_grad()
 def test_all(net, cfg, test_loader, test_info, step, writter=None, model_file=None):
     net.eval()
@@ -151,19 +168,23 @@ def test_all(net, cfg, test_loader, test_info, step, writter=None, model_file=No
     
     acc = AverageMeter()
 
+    # 遍历测试集中的每个数据批次
     for data, label, _, vid, vid_num_seg in test_loader:
         data, label = data.cuda(), label.cuda()
         vid_num_seg = vid_num_seg[0].cpu().item()
 
+        # 前向传播
         video_scores, _, actionness, cas = net(data)
 
         label_np = label.cpu().data.numpy()
         score_np = video_scores[0].cpu().data.numpy()
         
+        # 计算准确率
         pred_np = np.where(score_np < cfg.CLASS_THRESH, 0, 1)
         correct_pred = np.sum(label_np == pred_np, axis=1)
         acc.update(float(np.sum((correct_pred == cfg.NUM_CLASSES))), correct_pred.shape[0])
 
+        # 获取预测的动作激活和行为激活
         pred = np.where(score_np >= cfg.CLASS_THRESH)[0]
         if len(pred) == 0:
             pred = np.array([np.argmax(score_np)])
@@ -172,12 +193,14 @@ def test_all(net, cfg, test_loader, test_info, step, writter=None, model_file=No
         aness_pred = utils.get_pred_activations(actionness, pred, cfg)
         proposal_dict = utils.get_proposal_dict(cas_pred, aness_pred, pred, score_np, vid_num_seg, cfg)
 
+        # 进行非极大值抑制
         final_proposals = [utils.nms(v, cfg.NMS_THRESH) for _,v in proposal_dict.items()]
         final_res['results'][vid[0]] = utils.result2json(final_proposals, cfg.CLASS_DICT)
 
     json_path = os.path.join(cfg.OUTPUT_PATH, 'result.json')
     json.dump(final_res, open(json_path, 'w'))
     
+    # 评估性能指标
     anet_detection = ANETdetection(cfg.GT_PATH, json_path,
                                 subset='test', tiou_thresholds=cfg.TIOU_THRESH,
                                 verbose=False, check_status=False)
@@ -188,7 +211,8 @@ def test_all(net, cfg, test_loader, test_info, step, writter=None, model_file=No
         writter.add_scalar('Test Performance/mAP@AVG', average_mAP, step)
         for i in range(cfg.TIOU_THRESH.shape[0]):
             writter.add_scalar('mAP@tIOU/mAP@{:.1f}'.format(cfg.TIOU_THRESH[i]), mAP[i], step)
-
+    
+    # 记录性能指标
     test_info["step"].append(step)
     test_info["test_acc"].append(acc.avg)
     test_info["average_mAP"].append(average_mAP)

@@ -1,6 +1,6 @@
-# Code for CVPR'21 paper:
-# [Title]  - "CoLA: Weakly-Supervised Temporal Action Localization with Snippet Contrastive Learning"
-# [Author] - Can Zhang*, Meng Cao, Dongming Yang, Jie Chen and Yuexian Zou
+# CVPR'21 论文的代码：
+# [标题] - “CoLA：采用片段对比学习的弱监督时序动作定位”
+# [作者] - Can Zhang*，Meng Cao，Dongming Yang，Jie Chen和Yuexian Zou
 # [Github] - https://github.com/zhang-can/CoLA
 
 import os
@@ -12,15 +12,17 @@ import numpy as np
 from scipy.interpolate import interp1d
 from terminaltables import AsciiTable
 
+# 获取预测激活图
 def get_pred_activations(src, pred, config):
-    src = minmax_norm(src)
+    src = minmax_norm(src) # 最小最大归一化
     if len(src.size()) == 2:
         src = src.repeat((config.NUM_CLASSES, 1, 1)).permute(1, 2, 0)
     src_pred = src[0].cpu().numpy()[:, pred]
     src_pred = np.reshape(src_pred, (src.size(1), -1, 1))
-    src_pred = upgrade_resolution(src_pred, config.UP_SCALE)
+    src_pred = upgrade_resolution(src_pred, config.UP_SCALE) # 提高分辨率
     return src_pred
 
+# 获取提议字典
 def get_proposal_dict(cas_pred, aness_pred, pred, score_np, vid_num_seg, config):
     prop_dict = {}
     for th in config.CAS_THRESH:
@@ -46,6 +48,7 @@ def get_proposal_dict(cas_pred, aness_pred, pred, score_np, vid_num_seg, config)
             prop_dict[class_id] = prop_dict.get(class_id, []) + proposals[i]
     return prop_dict
 
+# 格式化结果表格
 def table_format(res_info, tIoU_thresh, title):
     table = [
         ['mAP@{:.1f}'.format(i) for i in tIoU_thresh],
@@ -61,6 +64,7 @@ def table_format(res_info, tIoU_thresh, title):
 
     return '\n' + table.table + '\n'
 
+# 提高分辨率
 def upgrade_resolution(arr, scale):
     x = np.arange(0, arr.shape[0])
     f = interp1d(x, arr, kind='linear', axis=0, fill_value='extrapolate')
@@ -68,6 +72,7 @@ def upgrade_resolution(arr, scale):
     up_scale = f(scale_x)
     return up_scale
 
+# 获取 OIC 提议
 def get_proposal_oic(tList, wtcam, final_score, c_pred, scale, v_len, sampling_frames, num_segments, _lambda=0.25, gamma=0.2):
     t_factor = (16 * v_len) / (scale * num_segments * sampling_frames)
     temp = []
@@ -95,6 +100,7 @@ def get_proposal_oic(tList, wtcam, final_score, c_pred, scale, v_len, sampling_f
             temp.append(c_temp)
     return temp
 
+# 将结果转换为json格式
 def result2json(result, class_dict):
     result_file = []
     class_idx2name = dict((v, k) for k, v in class_dict.items())
@@ -105,9 +111,11 @@ def result2json(result, class_dict):
             result_file.append(line)
     return result_file
 
+# 分组
 def grouping(arr):
     return np.split(arr, np.where(np.diff(arr) != 1)[0] + 1)
 
+# 保存最佳记录
 def save_best_record_thumos(test_info, file_path):
     fo = open(file_path, "w")
     fo.write("Step: {}\n".format(test_info["step"][-1]))
@@ -119,6 +127,7 @@ def save_best_record_thumos(test_info, file_path):
         fo.write("mAP@{:.1f}: {:.4f}\n".format(tIoU_thresh[i], test_info["mAP@{:.1f}".format(tIoU_thresh[i])][-1]))
     fo.close()
   
+# 最小最大归一化
 def minmax_norm(act_map, min_val=None, max_val=None):
     if min_val is None or max_val is None:
         relu = torch.nn.ReLU()
