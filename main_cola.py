@@ -12,7 +12,7 @@ import torch
 import numpy as np
 import warnings
 # 忽略警告信息
-warnings.filterwarnings("ignore")c
+warnings.filterwarnings("ignore")
 
 # 导入自定义工具函数和模型、损失函数、配置文件等
 import core.utils as utils
